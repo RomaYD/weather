@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Прогноз погоды</title>
+    {% load static %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .weather-card {
+            margin-top: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .table-container {
+            max-height: 500px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .table thead th {
+            position: sticky;
+            top: 0;
+            background-color: #f8f9fa;
+            z-index: 10;
+        }
+        .autocomplete-container {
+            position: relative;
+            flex-grow: 1;
+        }
+        .history-item {
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+        .history-container {
+            display: flex;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        #city-suggestions {
+            position: absolute;
+            z-index: 1000;
+            width: 100%;
+            background: white;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-top: 2px;
+            list-style: none;
+            padding: 0;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        #city-suggestions li {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+        #city-suggestions li:hover {
+            background-color: #f5f5f5;
+        }
+        #city-suggestions li:last-child {
+            border-bottom: none;
+        }
+        #historySection {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        #clearHistoryBtn {
+            margin-left: 10px;
+        }
+        .spinner-border {
+            display: none;
+            margin-left: 10px;
+        }stats-container {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .stats-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card weather-card">
+                    <div class="card-header bg-primary text-white">
+                        <h3 class="card-title mb-0">Прогноз погоды</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <div class="autocomplete-container">
+                                <input type="text" id="cityInput" class="form-control" placeholder="Начните вводить город..." autocomplete="off">
+                                <ul id="city-suggestions"></ul>
+                            </div>
+                            <button class="btn btn-primary" type="button" id="getWeatherBtn">
+                                Получить прогноз
+                                <span class="spinner-border spinner-border-sm" id="loadingSpinner"></span>
+                            </button>
+                        </div>
+                        <div id="historySection" class="d-none mt-2">
+                            <span>Недавно смотрели:</span>
+                            <div class="history-container" id="historyContainer"></div>
+                            <button id="clearHistoryBtn" class="btn btn-sm btn-outline-danger mt-2">Очистить историю</button>
+                        </div>
+                        <div id="error" class="alert alert-danger d-none mt-2"></div>
+                        <div class="stats-container d-none" id="statsSection">
+                            <h5>Статистика поиска</h5>
+                            <div id="statsContent">
+                            </div>
+                        </div>
+                        <div class="table-container mt-3">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Дата и время</th>
+                                        <th>Температура (°C)</th>
+                                        <th>Дождь (мм)</th>
+                                        <th>Снег (см)</th>
+                                        <th>Облачность (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="weatherData"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            const HISTORY_KEY = 'weatherHistory';
+            const STATS_KEY = 'weatherStats';
+            const MAX_HISTORY = 5;
+            let inputTimeout;
+            const cityInput = document.getElementById('cityInput');
+            const suggestionsList = document.getElementById('city-suggestions');
+            const loadingSpinner = $('#loadingSpinner');
+            const statsSection = $('#statsSection');
+            const statsContent = $('#statsContent');
+            initHistory();
+            loadStats();
+            function initHistory() {
+                try {
+                    const history = getHistory();
+                    if (history.length > 0) {
+                        $('#historySection').removeClass('d-none');
+                        renderHistory(history);
+                    }
+                } catch (e) {
+                    console.error('Ошибка работы с localStorage:', e);
+                }
+            }
+            function getHistory() {
+                const historyJson = localStorage.getItem(HISTORY_KEY);
+                return historyJson ? JSON.parse(historyJson) : [];
+            }
+            function saveToHistory(city) {
+                if (!city || city.length < 2) return;
+                try {
+                    let history = getHistory();
+                    history = history.filter(item => item !== city);
+                    history.unshift(city);
+                    if (history.length > MAX_HISTORY) {
+                        history = history.slice(0, MAX_HISTORY);
+                    }
+                    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+                    renderHistory(history);
+                    $('#historySection').removeClass('d-none');
+                    updateStats(city);
+                } catch (e) {
+                    console.error('Не удалось сохранить историю:', e);
+                }
+            }
+            function renderHistory(history) {
+                const container = $('#historyContainer').empty();
+                history.forEach(city => {
+                    const btn = $(`<button class="btn btn-sm btn-outline-primary history-item">${city}</button>`);
+                    btn.click(function() {
+                        $('#cityInput').val(city);
+                        getWeather();
+                    });
+                    container.append(btn);
+                });
+            }
+            function clearHistory() {
+                localStorage.removeItem(HISTORY_KEY);
+                $('#historySection').addClass('d-none');
+                $('#historyContainer').empty();
+            }
+            function updateStats(city) {
+                try {
+                    let stats = getStats();
+
+                    if (stats[city]) {
+                        stats[city] += 1;
+                    } else {
+                        stats[city] = 1;
+                    }
+                    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+                    renderStats(stats);
+                } catch (e) {
+                    console.error('Ошибка сохранения статистики:', e);
+                }
+            }
+            function getStats() {
+                const statsJson = localStorage.getItem(STATS_KEY);
+                return statsJson ? JSON.parse(statsJson) : {};
+            }
+            function loadStats() {
+                const stats = getStats();
+                if (Object.keys(stats).length > 0) {
+                    renderStats(stats);
+                    statsSection.removeClass('d-none');
+                }
+            }
+            function renderStats(stats) {
+                statsSection.removeClass('d-none');
+                const sortedStats = Object.entries(stats)
+                    .sort((a, b) => b[1] - a[1]);
+                let html = '';
+                sortedStats.forEach(([city, count]) => {
+                    html += `
+                        <div class="stats-item">
+                            <span>${city}</span>
+                            <span class="badge bg-primary rounded-pill">${count}</span>
+                        </div>
+                    `;
+                });
+                statsContent.html(html || '<p>Статистика пока недоступна</p>');
+            }
+            function getWeather() {
+                const city = $('#cityInput').val().trim();
+                const errorElement = $('#error');
+                const weatherDataElement = $('#weatherData');
+                errorElement.addClass('d-none');
+                weatherDataElement.empty();
+                if (!city) {
+                    showError('Введите название города');
+                    return;
+                }
+                loadingSpinner.show();
+                $('#getWeatherBtn').prop('disabled', true);
+                $.ajax({
+                    url: '/get_weather/',
+                    method: 'POST',
+                    data: {
+                        'city': city,
+                        'csrfmiddlewaretoken': '{{ csrf_token }}'
+                    },
+                    success: function(data) {
+                        if (data.error) {
+                            showError(data.error);
+                            return;
+                        }
+                        for (let i = 0; i < data.date.length; i++) {
+                            weatherDataElement.append(`
+                                <tr>
+                                    <td>${data.date[i]}</td>
+                                    <td>${data.temperature[i].toFixed(1)}</td>
+                                    <td>${data.rain[i].toFixed(1)}</td>
+                                    <td>${data.snowfall[i].toFixed(1)}</td>
+                                    <td>${data.cloud_cover[i].toFixed(1)}</td>
+                                </tr>
+                            `);
+                        }
+                        saveToHistory(city);
+                    },
+                    error: function(xhr) {
+                        showError('Произошла ошибка при получении данных');
+                        console.error('Error:', xhr.responseText);
+                    },
+                    complete: function() {
+                        loadingSpinner.hide();
+                        $('#getWeatherBtn').prop('disabled', false);
+                    }
+                });
+            }
+            function showError(message) {
+                $('#error').text(message).removeClass('d-none');
+            }
+            $('#getWeatherBtn').click(getWeather);
+            $('#clearHistoryBtn').click(clearHistory);
+            $('#cityInput').keypress(function(e) {
+                if (e.which == 13) getWeather();
+            });
+            cityInput.addEventListener('input', function(e) {
+                clearTimeout(inputTimeout);
+                inputTimeout = setTimeout(() => {
+                    const query = e.target.value.trim();
+                    if (query.length < 2) {
+                        suggestionsList.style.display = 'none';
+                        return;
+                    }
+                    fetch(`/city-autocomplete/?q=${encodeURIComponent(query)}`)
+                        .then(response => {
+                            if (!response.ok) throw new Error('Ошибка сети');
+                            return response.json();
+                        })
+                        .then(cities => {
+                            suggestionsList.innerHTML = '';
+                            if (cities.length === 0) {
+                                suggestionsList.style.display = 'none';
+                                return;
+                            }
+                            cities.forEach(city => {
+                                const li = document.createElement('li');
+                                li.textContent = `${city.name}${city.country ? ', ' + city.country : ''}`;
+                                li.addEventListener('click', function() {
+                                    cityInput.value = city.name;
+                                    suggestionsList.style.display = 'none';
+                                });
+                                suggestionsList.appendChild(li);
+                            });
+                            suggestionsList.style.display = 'block';
+                        })
+                        .catch(error => {
+                            console.error('Ошибка:', error);
+                            suggestionsList.style.display = 'none';
+                        });
+                }, 300);
+            });
+            document.addEventListener('click', function(e) {
+                if (e.target !== cityInput) {
+                    suggestionsList.style.display = 'none';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
